@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YoutiBerlexr - Tu Feed Social</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts - Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-purple-50 to-pink-100 p-4 sm:p-6 lg:p-8">
+
+    <!-- Header for YoutiBerlexr -->
+    <header class="text-center mb-10">
+        <h1 class="text-5xl font-extrabold text-purple-700 drop-shadow-lg mb-2">
+            YoutiBerlexr
+        </h1>
+        <p class="text-xl text-purple-500 font-medium">
+            ¡Descubre las últimas creaciones de todos!
+        </p>
+    </header>
+
+    <!-- Error Message Display -->
+    <div id="errorMessage" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative mb-6" role="alert">
+        <strong class="font-bold">¡Error!</strong>
+        <span class="block sm:inline" id="errorText"></span>
+        <span class="absolute top-0 bottom-0 right-0 px-4 py-3 cursor-pointer" onclick="document.getElementById('errorMessage').classList.add('hidden')">
+            <svg class="fill-current h-6 w-6 text-red-500" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Cerrar</title><path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.697l-2.651 2.652a1.2 1.2 0 1 1-1.697-1.697L8.303 10l-2.652-2.651a1.2 1.2 0 0 1 1.697-1.697L10 8.303l2.651-2.652a1.2 1.2 0 0 1 1.697 1.697L11.697 10l2.652 2.651a1.2 1.2 0 0 1 0 1.698z"/></svg>
+        </span>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="flex items-center justify-center min-h-screen bg-gray-100 p-4 absolute inset-0 z-50 bg-opacity-75 bg-gray-100">
+        <div class="flex flex-col items-center">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
+            <p class="mt-4 text-gray-700">Cargando publicaciones...</p>
+        </div>
+    </div>
+
+    <!-- Display Creations -->
+    <section class="max-w-4xl mx-auto">
+        <h2 class="text-3xl font-semibold text-purple-600 mb-6 text-center">
+            Últimas Publicaciones
+        </h2>
+        <p id="noCreationsMessage" class="text-center text-gray-500 text-lg hidden">
+            Aún no hay publicaciones. ¡Sé el primero en usar Google Shooter!
+        </p>
+        <div id="creationsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Publicaciones se añadirán aquí dinámicamente -->
+        </div>
+    </section>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, query } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+        // Define the Firebase configuration and app ID (provided by the Canvas environment)
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        let app, db, auth;
+
+        // Function to display error messages
+        function showErrorMessage(message) {
+            document.getElementById('errorText').innerText = message;
+            document.getElementById('errorMessage').classList.remove('hidden');
+        }
+
+        // Initialize Firebase and handle authentication for public data access
+        window.onload = async () => {
+            document.getElementById('loadingSpinner').classList.remove('hidden'); // Show loading spinner
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (!user) {
+                        // Sign in anonymously for public data viewing
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    }
+                    document.getElementById('loadingSpinner').classList.add('hidden'); // Hide loading spinner
+                    fetchPublicCreations(); // Start fetching public creations once authenticated
+                });
+            } catch (error) {
+                console.error("Error initializing Firebase:", error);
+                showErrorMessage("Error al inicializar Firebase. Por favor, recarga la página.");
+                document.getElementById('loadingSpinner').classList.add('hidden'); // Hide loading spinner
+            }
+        };
+
+        // Render content based on its type (reused from Google Shooter)
+        function renderContent(creation) {
+            let contentHtml = '';
+            switch (creation.type) {
+                case 'text':
+                    contentHtml = `<p class="text-gray-700 break-words whitespace-pre-wrap">${escapeHtml(creation.value)}</p>`;
+                    break;
+                case 'image':
+                    contentHtml = `
+                        <img
+                            src="${escapeHtml(creation.value)}"
+                            alt="Publicación de imagen"
+                            class="rounded-lg w-full h-auto object-cover"
+                            onerror="this.onerror=null;this.src='https://placehold.co/400x300/CCCCCC/333333?text=Error+Imagen';"
+                        />
+                    `;
+                    break;
+                case 'video':
+                    const videoId = creation.value.split('v=')[1]?.split('&')[0] || creation.value.split('/').pop();
+                    const embedUrl = `https://www.youtube.com/embed/${escapeHtml(videoId)}`;
+                    contentHtml = `
+                        <iframe
+                            class="w-full aspect-video rounded-lg"
+                            src="${embedUrl}"
+                            title="Publicación de video"
+                            frameborder="0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowfullscreen
+                        ></iframe>
+                    `;
+                    break;
+                case 'html':
+                    contentHtml = `<div class="overflow-auto max-h-96 border rounded p-2 bg-gray-50">${creation.value}</div>`;
+                    break;
+                case 'news':
+                    contentHtml = `
+                        <div class="border-l-4 border-blue-500 pl-4">
+                            <h3 class="font-semibold text-lg text-blue-800 mb-1">Noticia</h3>
+                            <p class="text-gray-700 break-words whitespace-pre-wrap">${escapeHtml(creation.value)}</p>
+                        </div>
+                    `;
+                    break;
+                default:
+                    contentHtml = `<p class="text-gray-500">Tipo de contenido desconocido.</p>`;
+            }
+            return contentHtml;
+        }
+
+        // Helper function to escape HTML for display purposes
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+
+        // Fetch public creations from Firestore in real-time
+        function fetchPublicCreations() {
+            if (!db) return;
+
+            // Leer de la colección pública que Google Shooter está usando
+            const publicCreationsCollectionRef = collection(db, `artifacts/${appId}/public/data/youtiberlexr_posts`);
+            const q = query(publicCreationsCollectionRef);
+
+            onSnapshot(q, (snapshot) => {
+                const creationsContainer = document.getElementById('creationsContainer');
+                creationsContainer.innerHTML = ''; // Limpiar publicaciones existentes
+
+                const fetchedCreations = [];
+                snapshot.forEach(doc => {
+                    fetchedCreations.push({
+                        id: doc.id,
+                        ...doc.data()
+                    });
+                });
+
+                // Ordenar publicaciones por fecha y hora en memoria (más reciente primero)
+                fetchedCreations.sort((a, b) => {
+                    const timeA = a.timestamp ? a.timestamp.toDate() : new Date(0);
+                    const timeB = b.timestamp ? b.timestamp.toDate() : new Date(0);
+                    return timeB - timeA;
+                });
+
+                if (fetchedCreations.length === 0) {
+                    document.getElementById('noCreationsMessage').classList.remove('hidden');
+                } else {
+                    document.getElementById('noCreationsMessage').classList.add('hidden');
+                }
+
+                fetchedCreations.forEach(creation => {
+                    const creationCard = document.createElement('div');
+                    creationCard.className = "bg-white rounded-xl shadow-lg p-6 border border-gray-200 hover:shadow-xl transition duration-300 transform hover:-translate-y-1";
+                    creationCard.innerHTML = `
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="px-3 py-1 rounded-full text-sm font-semibold ${
+                                creation.type === 'text' ? 'bg-green-100 text-green-800' :
+                                creation.type === 'image' ? 'bg-purple-100 text-purple-800' :
+                                creation.type === 'video' ? 'bg-red-100 text-red-800' :
+                                creation.type === 'html' ? 'bg-yellow-100 text-yellow-800' :
+                                creation.type === 'news' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'
+                            }">
+                                ${creation.type.charAt(0).toUpperCase() + creation.type.slice(1)}
+                            </span>
+                            ${creation.timestamp ? `<span class="text-xs text-gray-500">${new Date(creation.timestamp.toDate()).toLocaleString()}</span>` : ''}
+                        </div>
+                        <div class="mb-4">
+                            ${renderContent(creation)}
+                        </div>
+                        <p class="text-xs text-gray-400 mt-2">
+                            Publicado por: <span class="font-mono">${creation.userId}</span>
+                        </p>
+                    `;
+                    creationsContainer.appendChild(creationCard);
+                });
+                document.getElementById('errorMessage').classList.add('hidden'); // Clear any previous errors
+            }, (error) => {
+                console.error("Error fetching public creations:", error);
+                showErrorMessage("Error al cargar las publicaciones. Inténtalo de nuevo.");
+            });
+        }
+    </script>
+</body>
+</html>
